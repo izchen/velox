@@ -209,10 +209,7 @@ stringPosition(const T& string, const T& subString, int64_t instance = 0) {
 
 /// Replace replaced with replacement in inputString and write results to
 /// outputString.
-template <
-    typename TOutString,
-    typename TInString,
-    bool ignoreEmptyReplaced = false>
+template <typename TOutString, typename TInString>
 FOLLY_ALWAYS_INLINE void replace(
     TOutString& outputString,
     const TInString& inputString,
@@ -229,7 +226,7 @@ FOLLY_ALWAYS_INLINE void replace(
         (inputString.size() / replaced.size()) * replacement.size());
   }
 
-  auto outputSize = stringCore::replace<ignoreEmptyReplaced>(
+  auto outputSize = stringCore::replace(
       outputString.data(),
       std::string_view(inputString.data(), inputString.size()),
       std::string_view(replaced.data(), replaced.size()),
@@ -240,17 +237,14 @@ FOLLY_ALWAYS_INLINE void replace(
 }
 
 /// Replace replaced with replacement in place in string.
-template <
-    typename TInOutString,
-    typename TInString,
-    bool ignoreEmptyReplaced = false>
+template <typename TInOutString, typename TInString>
 FOLLY_ALWAYS_INLINE void replaceInPlace(
     TInOutString& string,
     const TInString& replaced,
     const TInString& replacement) {
   assert(replacement.size() <= replaced.size() && "invalid inplace replace");
 
-  auto outputSize = stringCore::replace<ignoreEmptyReplaced>(
+  auto outputSize = stringCore::replace(
       string.data(),
       std::string_view(string.data(), string.size()),
       std::string_view(replaced.data(), replaced.size()),
