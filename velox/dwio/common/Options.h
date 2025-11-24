@@ -17,6 +17,7 @@
 #pragma once
 
 #include <limits>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <folly/Executor.h>
@@ -51,6 +52,7 @@ enum class FileFormat {
   NIMBLE = 8,
   ORC = 9,
   SST = 10, // rocksdb sst format
+  AVRO = 11,
 };
 
 FileFormat toFileFormat(std::string_view s);
@@ -104,6 +106,7 @@ class SerDeOptions {
   bool lastColumnTakesRest;
   uint8_t escapeChar;
   bool isEscaped;
+  std::unordered_map<std::string, std::string> parameters;
 
   inline static const std::string kFieldDelim{"field.delim"};
   inline static const std::string kCollectionDelim{"collection.delim"};
