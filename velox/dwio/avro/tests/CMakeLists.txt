@@ -12,16 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if(VELOX_ENABLE_AVRO)
-  add_subdirectory(reader)
+set(
+  TEST_LINK_LIBS
+  velox_dwio_avro_reader
+  velox_dwio_avro_reader_register
+  velox_vector_test_lib
+  velox_exec_test_lib
+  velox_temp_path
+  Folly::folly
+  gflags::gflags
+  glog::glog
+  GTest::gtest
+  GTest::gtest_main
+  GTest::gmock
+)
 
-  if(VELOX_BUILD_TESTING)
-    add_subdirectory(tests)
-  endif()
-endif()
+add_executable(velox_avro_reader_test AvroReaderTest.cpp)
 
-velox_add_library(velox_dwio_avro_reader_register RegisterAvroReader.cpp)
+add_test(
+  NAME velox_avro_reader_test
+  COMMAND velox_avro_reader_test
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
-if(VELOX_ENABLE_AVRO)
-  velox_link_libraries(velox_dwio_avro_reader_register velox_dwio_avro_reader)
-endif()
+target_link_libraries(velox_avro_reader_test ${TEST_LINK_LIBS})
