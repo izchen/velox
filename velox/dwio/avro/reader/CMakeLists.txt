@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if(VELOX_ENABLE_AVRO)
-  add_subdirectory(reader)
-  if(VELOX_BUILD_TESTING)
-#    add_subdirectory(tests)
-  endif()
-endif()
-
-velox_add_library(velox_dwio_avro_reader_register RegisterAvroReader.cpp)
+velox_add_library(velox_dwio_avro_reader AvroReader.cpp)
 
 if(VELOX_ENABLE_AVRO)
-  velox_link_libraries(velox_dwio_avro_reader_register velox_dwio_avro_reader)
+  find_package(AvroCpp REQUIRED)
+
+  velox_link_libraries(
+    velox_dwio_avro_reader
+    AvroCpp::avrocpp
+  )
 endif()
