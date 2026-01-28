@@ -43,6 +43,14 @@ class AvroReaderTest : public testing::Test,
     unregisterAvroReaderFactory();
   }
 
+  void setScanSpec(
+      const Type& type,
+      dwio::common::RowReaderOptions& options) const {
+    auto spec = std::make_shared<common::ScanSpec>("root");
+    spec->addAllChildFields(type);
+    options.setScanSpec(spec);
+  }
+
   std::unique_ptr<dwio::common::Reader> createReader(
       const std::shared_ptr<exec::test::TempFilePath>& filePath,
       std::optional<dwio::common::ReaderOptions> readerOptions =
@@ -53,6 +61,27 @@ class AvroReaderTest : public testing::Test,
     auto input = std::make_unique<dwio::common::BufferedInput>(
         std::make_shared<LocalReadFile>(filePath->getPath()), *pool());
     return factory->createReader(std::move(input), options);
+  }
+
+  std::unique_ptr<dwio::common::RowReader> createRowReader(
+      dwio::common::Reader& reader,
+      std::optional<dwio::common::RowReaderOptions> rowOptions =
+          std::nullopt) const {
+    auto options = rowOptions.value_or(dwio::common::RowReaderOptions{});
+    setScanSpec(*reader.rowType(), options);
+    return reader.createRowReader(options);
+  }
+
+  VectorPtr readRows(
+      dwio::common::Reader& reader,
+      uint64_t maxRows,
+      uint64_t expectedCount,
+      std::optional<dwio::common::RowReaderOptions> rowOptions =
+          std::nullopt) const {
+    auto rowReader = createRowReader(reader, rowOptions);
+    VectorPtr result;
+    EXPECT_EQ(rowReader->next(maxRows, result), expectedCount);
+    return result;
   }
 
   static std::shared_ptr<exec::test::TempFilePath> writeAvroFile(
@@ -622,6 +651,56 @@ TEST_F(AvroReaderTest, complexNestedSchemaMapping) {
   EXPECT_EQ(propertyRow.childAt(1)->kind(), TypeKind::ARRAY);
   const auto& propertyRowValue = propertyRow.childAt(1)->asArray();
   EXPECT_EQ(propertyRowValue.elementType()->kind(), TypeKind::INTEGER);
+}
+
+TEST_F(AvroReaderTest, readsAllTypesData) {
+  const auto filePath = writeAllTypesRecord();
+  auto reader = createReader(filePath);
+  auto result = readRows(*reader, 5, 2);
+
+  auto expected = makeRowVector({
+      makeNullConstant(TypeKind::UNKNOWN, 2),
+      makeFlatVector<bool>({true, false}),
+      makeFlatVector<int32_t>({123, -456}),
+      makeFlatVector<int64_t>({7890, -9876}),
+      makeFlatVector<float>({1.5F, -2.5F}),
+      makeFlatVector<double>({3.25, -4.75}),
+      makeFlatVector<std::string>({"alpha", "beta"}),
+      makeFlatVector<std::string>({"\x01\x02", "\x0A\x0B\x0C"}, VARBINARY()),
+      makeFlatVector<std::string>({"RED", "GREEN"}),
+      makeFlatVector<std::string>({"\xAA\xBB", "\xCC\xDD"}, VARBINARY()),
+      makeArrayVector<int32_t>({{1, 2}, {3, 4}}),
+      makeMapVector<std::string, int64_t>(
+          {{{"a", 10}, {"b", 20}}, {{"c", -5}}}),
+      makeRowVector({makeFlatVector<int32_t>({101, 202}),
+                     makeFlatVector<std::string>({"sub-alpha", "sub-beta"})}),
+      makeNullableFlatVector<int32_t>({42, std::nullopt}),
+      makeFlatVector<int32_t>({1000, 2000}, DATE()),
+      makeFlatVector<int64_t>({1234 * 1000L, 4321 * 1000L}, TIME()),
+      makeFlatVector<int64_t>({5678, 8765}, TIME()),
+      makeFlatVector<Timestamp>(
+          {Timestamp::fromMillis(1700), Timestamp::fromMillis(2700)}),
+      makeFlatVector<Timestamp>(
+          {Timestamp::fromMicros(3500), Timestamp::fromMicros(4500)}),
+      makeFlatVector<Timestamp>(
+          {Timestamp::fromNanos(9876543210), Timestamp::fromNanos(1234567890)}),
+      makeFlatVector<std::string>(
+          {"123e4567-e89b-12d3-a456-426655440000",
+           "00000000-0000-0000-0000-000000000000"}),
+      makeFlatVector<std::string>(
+          {std::string(
+               "\x10\x11\x12\x13\x14\x15\x16\x17"
+               "\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F",
+               16),
+           std::string(
+               "\xFF\xEE\xDD\xCC\xBB\xAA\x99\x88"
+               "\x77\x66\x55\x44\x33\x22\x11\x00",
+               16)},
+          VARBINARY()),
+      makeFlatVector<int64_t>({12345, -4200}, DECIMAL(9, 2)),
+      makeFlatVector<int64_t>({6789, -1357}, DECIMAL(7, 3)),
+  });
+  assertEqualVectors(expected, result);
 }
 } // namespace
 } // namespace facebook::velox::avro
