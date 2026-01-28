@@ -430,16 +430,19 @@ struct AvroFileContents {
       std::shared_ptr<AvroTypeInfo> typeInfoIn,
       std::unique_ptr<::avro::DataFileReader<::avro::GenericDatum>> readerIn,
       std::shared_ptr<const RowType> rowTypeIn,
-      std::shared_ptr<const TypeWithId> schemaWithIdIn)
+      std::shared_ptr<const TypeWithId> schemaWithIdIn,
+      memory::MemoryPool& poolIn)
       : typeInfo(std::move(typeInfoIn)),
-        cachedReader(std::move(readerIn)),
+        avroReader(std::move(readerIn)),
         rowType(std::move(rowTypeIn)),
-        schemaWithId(std::move(schemaWithIdIn)){}
+        schemaWithId(std::move(schemaWithIdIn)),
+        pool(poolIn){}
 
   std::shared_ptr<AvroTypeInfo> typeInfo;
-  std::unique_ptr<::avro::DataFileReader<::avro::GenericDatum>> cachedReader;
+  std::unique_ptr<::avro::DataFileReader<::avro::GenericDatum>> avroReader;
   std::shared_ptr<const RowType> rowType;
   std::shared_ptr<const TypeWithId> schemaWithId;
+  memory::MemoryPool& pool;
 };
 
 AvroReader::AvroReader(
@@ -472,10 +475,18 @@ AvroReader::AvroReader(
     avroSchema = avroReader->readerSchema();
   }
 
-  auto typeInfo = buildTypeInfo(avroSchema.root(), options);
+  auto avroSchemaRoot = avroSchema.root();
+  VELOX_CHECK_EQ(
+    avroSchemaRoot->type(),
+    ::avro::Type::AVRO_RECORD,
+    "Avro root schema must be of type RECORD, but got Avro type enum value {}. "
+    "Please refer to avro::Type in "
+    "https://github.com/apache/avro/blob/main/lang/c%2B%2B/include/avro/Types.hh "
+    "to find the corresponding type.",
+    static_cast<int>(avroSchemaRoot->type()));
+  auto typeInfo = buildTypeInfo(avroSchemaRoot, options);
   auto rowType =
-    std::dynamic_pointer_cast<const RowType>(typeInfo->veloxType);
-  VELOX_CHECK_NOT_NULL(rowType, "Avro root schema must be a record");
+    std::static_pointer_cast<const RowType>(typeInfo->veloxType);
   const auto& scanSpec = options.scanSpec();
   std::shared_ptr<const TypeWithId> schemaWithId;
   if (scanSpec) {
@@ -488,7 +499,8 @@ AvroReader::AvroReader(
       std::move(typeInfo),
       std::move(avroReader),
       std::move(rowType),
-      std::move(schemaWithId));
+      std::move(schemaWithId),
+      options.memoryPool());
 }
 
 std::optional<uint64_t> AvroReader::numberOfRows() const {
