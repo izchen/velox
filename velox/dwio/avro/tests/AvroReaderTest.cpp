@@ -21,6 +21,7 @@
 #include "velox/common/base/VeloxException.h"
 #include "velox/dwio/avro/RegisterAvroReader.h"
 #include "velox/exec/tests/utils/TempFilePath.h"
+#include "velox/type/Filter.h"
 #include "velox/type/Type.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
@@ -928,6 +929,60 @@ TEST_F(AvroReaderTest, scanBatchBytesRespected) {
 
   auto expected = makeRowVector({makeFlatVector<int>({11})});
   assertEqualVectors(expected, thirdBatch);
+}
+
+TEST_F(AvroReaderTest, appliesFilterOnNonProjectedColumn) {
+  const std::string schemaJson = R"JSON(
+  {
+    "type": "record",
+    "name": "FilterRecord",
+    "fields": [
+      {"name": "a", "type": "int"},
+      {"name": "b", "type": "int"}
+    ]
+  })JSON";
+
+  auto filePath = writeAvroFile(
+      schemaJson, [](auto& writer, const ::avro::ValidSchema& schema) {
+        ::avro::GenericDatum datum(schema.root());
+        auto& record = datum.value<::avro::GenericRecord>();
+        auto writeRow = [&](int32_t aValue, int32_t bValue) {
+          record.fieldAt(0).value<int32_t>() = aValue;
+          record.fieldAt(1).value<int32_t>() = bValue;
+          writer.write(datum);
+        };
+        writeRow(1, 5);
+        writeRow(2, 20);
+        writeRow(3, 25);
+      });
+
+  auto reader = createReader(filePath);
+  dwio::common::RowReaderOptions options;
+  auto spec = std::make_shared<common::ScanSpec>("root");
+  auto* projectedSpec = spec->addField("a", 0);
+  ASSERT_NE(projectedSpec, nullptr);
+  projectedSpec->setProjectOut(true);
+  projectedSpec->setChannel(0);
+  auto* filterSpec = spec->addField("b", common::ScanSpec::kNoChannel);
+  ASSERT_NE(filterSpec, nullptr);
+  filterSpec->setProjectOut(false);
+  filterSpec->setChannel(common::ScanSpec::kNoChannel);
+  filterSpec->setFilter(
+      std::make_shared<common::BigintRange>(15, 30, false));
+  options.setScanSpec(spec);
+
+  auto rowReader = reader->createRowReader(options);
+  VectorPtr result;
+  EXPECT_EQ(rowReader->next(10, result), 3);
+  ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->size(), 2);
+
+  auto rowVector = result->as<RowVector>();
+  ASSERT_NE(rowVector, nullptr);
+  ASSERT_EQ(rowVector->type()->asRow().size(), 1);
+  EXPECT_EQ(rowVector->type()->asRow().nameOf(0), "a");
+  auto expected = makeRowVector({makeFlatVector<int32_t>({2, 3})});
+  assertEqualVectors(expected, result);
 }
 } // namespace
 } // namespace facebook::velox::avro

@@ -155,6 +155,25 @@ std::shared_ptr<AvroTypeInfo> buildTypeInfo(
     const ::avro::NodePtr& node,
     const ReaderOptions& options);
 
+std::optional<std::vector<bool>> buildTopLevelFieldMask(
+    const RowType& rowType,
+    const dwio::common::ScanSpec& scanSpec) {
+  std::vector<bool> mask(rowType.size(), false);
+  for (const auto& childSpec : scanSpec.children()) {
+    if (childSpec->isConstant()) {
+      continue;
+    }
+    const bool needsValue =
+        childSpec->projectOut() || childSpec->filter() != nullptr;
+    if (!needsValue) {
+      continue;
+    }
+    const auto childIdx = rowType.getChildIdx(childSpec->fieldName());
+    mask[childIdx] = true;
+  }
+  return mask;
+}
+
 void applyDecimalLogicalType(
     const ::avro::LogicalType& logical,
     AvroTypeInfo& info) {
@@ -768,6 +787,46 @@ void writeDatum(const ResolvedDatum& resolved, GenericWriter& writer) {
           static_cast<int>(resolvedDatum.type()));
   }
 }
+
+void writeDatumWithFieldMask(
+    const ResolvedDatum& resolved,
+    GenericWriter& writer,
+    const std::vector<bool>* topLevelFieldMask) {
+  if (!topLevelFieldMask) {
+    writeDatum(resolved, writer);
+    return;
+  }
+
+  const auto& resolvedInfo = *resolved.info;
+  const auto& resolvedDatum = *resolved.datum;
+  if (resolved.unionChildIndex.has_value() ||
+      resolvedDatum.type() != ::avro::Type::AVRO_RECORD ||
+      topLevelFieldMask->size() != resolvedInfo.children.size()) {
+    writeDatum(resolved, writer);
+    return;
+  }
+
+  auto& rowWriter = writer.castTo<DynamicRow>();
+  const auto& record = resolvedDatum.value<::avro::GenericRecord>();
+  VELOX_CHECK_EQ(
+      resolvedInfo.children.size(),
+      record.fieldCount(),
+      "Mismatch between Avro record fields and schema information.");
+  for (size_t i = 0; i < resolvedInfo.children.size(); ++i) {
+    if (!(*topLevelFieldMask)[i]) {
+      continue;
+    }
+    auto resolvedField =
+        resolveUnionAndNull(*resolvedInfo.children[i], record.fieldAt(i));
+    if (!resolvedField.has_value()) {
+      rowWriter.set_null_at(static_cast<int32_t>(i));
+      continue;
+    }
+
+    auto& childWriter = rowWriter.get_writer_at(i);
+    writeDatum(*resolvedField, childWriter);
+  }
+}
 } // namespace
 
 
@@ -878,7 +937,13 @@ AvroRowReader::AvroRowReader(
       options_(options),
       atEnd_(false),
       rowSize_(0),
-      estimatedRowVectorSize_(0){
+      estimatedRowVectorSize_(0),
+      topLevelFieldMask_(std::nullopt) {
+
+  if (const auto scanSpec = options_.scanSpec()) {
+    topLevelFieldMask_ =
+        buildTopLevelFieldMask(*contents_->rowType, *scanSpec);
+  }
 
   if (options.offset() > 0) {
     reader_->sync(static_cast<int64_t>(options.offset()));
@@ -957,7 +1022,10 @@ uint64_t AvroRowReader::next(
     writer.setOffset(numRead);
 
     const ResolvedDatum resolved{rootInfo, datum_.get(), std::nullopt};
-    writeDatum(resolved, writer.current());
+    writeDatumWithFieldMask(
+        resolved,
+        writer.current(),
+        topLevelFieldMask_ ? &topLevelFieldMask_.value() : nullptr);
     writer.commit(true);
     ++numRead;
   }

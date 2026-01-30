@@ -86,6 +86,7 @@ private:
   bool atEnd_;
   uint64_t rowSize_;
   uint64_t estimatedRowVectorSize_;
+  std::optional<std::vector<bool>> topLevelFieldMask_;
 
 };
 } // namespace facebook::velox::avro
