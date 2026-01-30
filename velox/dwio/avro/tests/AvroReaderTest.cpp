@@ -394,6 +394,172 @@ class AvroReaderTest : public testing::Test,
         });
     return filePath;
   }
+
+  std::shared_ptr<exec::test::TempFilePath> writeUnionRecord() const {
+    const std::string schemaJson = R"JSON(
+    {
+      "type": "record",
+      "name": "UnionRecord",
+      "fields": [
+        {"name": "simpleString", "type": ["string"]},
+        {"name": "simpleNull", "type": ["null"]},
+        {"name": "nullableInt", "type": ["null", "int"]},
+        {"name": "intOrLong", "type": ["int", "long"]},
+        {"name": "floatOrDouble", "type": ["float", "double"]},
+        {"name": "nullableIntOrLong", "type": ["null", "int", "long"]},
+        {"name": "nullableFloatOrDouble", "type": ["float", "null", "double"]},
+        {"name": "mixedUnion", "type": ["int", "string"]},
+        {"name": "nullableMixedUnion", "type": ["int", "long", "string", "null"]}
+      ]
+    })JSON";
+    auto filePath = writeAvroFile(
+        schemaJson,
+        [](auto& writer, const ::avro::ValidSchema& schema) {
+          ::avro::GenericDatum datum(schema.root());
+          auto& record = datum.value<::avro::GenericRecord>();
+
+          auto writeRow = [&](const std::string& simpleString,
+                              std::optional<int32_t> nullableInt,
+                              int64_t intOrLongValue,
+                              bool intOrLongIsLong,
+                              double floatOrDoubleValue,
+                              bool floatOrDoubleIsDouble,
+                              std::optional<int64_t> nullableIntOrLongValue,
+                              int nullableIntOrLongBranch,
+                              std::optional<double> nullableFloatOrDoubleValue,
+                              int nullableFloatOrDoubleBranch,
+                              std::optional<int32_t> mixedUnionInt,
+                              std::optional<std::string> mixedUnionString,
+                              std::optional<int32_t> nullableMixedUnionInt,
+                              std::optional<int64_t> nullableMixedUnionLong,
+                              std::optional<std::string> nullableMixedUnionString,
+                              bool nullableMixedUnionIsNull) {
+            record.fieldAt(0).value<std::string>() = simpleString;
+            record.fieldAt(1) = ::avro::GenericDatum();
+
+            auto& nullableIntDatum = record.fieldAt(2);
+            if (nullableInt.has_value()) {
+              nullableIntDatum.selectBranch(1);
+              nullableIntDatum.value<int32_t>() = nullableInt.value();
+            } else {
+              nullableIntDatum.selectBranch(0);
+            }
+
+            auto& intOrLongDatum = record.fieldAt(3);
+            if (intOrLongIsLong) {
+              intOrLongDatum.selectBranch(1);
+              intOrLongDatum.value<int64_t>() = intOrLongValue;
+            } else {
+              intOrLongDatum.selectBranch(0);
+              intOrLongDatum.value<int32_t>() =
+                  static_cast<int32_t>(intOrLongValue);
+            }
+
+            auto& floatOrDoubleDatum = record.fieldAt(4);
+            if (floatOrDoubleIsDouble) {
+              floatOrDoubleDatum.selectBranch(1);
+              floatOrDoubleDatum.value<double>() = floatOrDoubleValue;
+            } else {
+              floatOrDoubleDatum.selectBranch(0);
+              floatOrDoubleDatum.value<float>() =
+                  static_cast<float>(floatOrDoubleValue);
+            }
+
+            auto& nullableIntOrLongDatum = record.fieldAt(5);
+            if (nullableIntOrLongValue.has_value()) {
+              nullableIntOrLongDatum.selectBranch(nullableIntOrLongBranch);
+              if (nullableIntOrLongBranch == 1) {
+                nullableIntOrLongDatum.value<int32_t>() =
+                    static_cast<int32_t>(nullableIntOrLongValue.value());
+              } else {
+                nullableIntOrLongDatum.value<int64_t>() =
+                    nullableIntOrLongValue.value();
+              }
+            } else {
+              nullableIntOrLongDatum.selectBranch(0);
+            }
+
+            auto& nullableFloatOrDoubleDatum = record.fieldAt(6);
+            if (nullableFloatOrDoubleValue.has_value()) {
+              nullableFloatOrDoubleDatum.selectBranch(
+                  nullableFloatOrDoubleBranch);
+              if (nullableFloatOrDoubleBranch == 0) {
+                nullableFloatOrDoubleDatum.value<float>() =
+                    static_cast<float>(nullableFloatOrDoubleValue.value());
+              } else {
+                nullableFloatOrDoubleDatum.value<double>() =
+                    nullableFloatOrDoubleValue.value();
+              }
+            } else {
+              nullableFloatOrDoubleDatum.selectBranch(1);
+            }
+
+            auto& mixedUnionDatum = record.fieldAt(7);
+            if (mixedUnionInt.has_value()) {
+              mixedUnionDatum.selectBranch(0);
+              mixedUnionDatum.value<int32_t>() = mixedUnionInt.value();
+            } else {
+              mixedUnionDatum.selectBranch(1);
+              mixedUnionDatum.value<std::string>() = mixedUnionString.value();
+            }
+
+            auto& nullableMixedUnionDatum = record.fieldAt(8);
+            if (nullableMixedUnionIsNull) {
+              nullableMixedUnionDatum.selectBranch(3);
+            } else if (nullableMixedUnionInt.has_value()) {
+              nullableMixedUnionDatum.selectBranch(0);
+              nullableMixedUnionDatum.value<int32_t>() =
+                  nullableMixedUnionInt.value();
+            } else if (nullableMixedUnionLong.has_value()) {
+              nullableMixedUnionDatum.selectBranch(1);
+              nullableMixedUnionDatum.value<int64_t>() =
+                  nullableMixedUnionLong.value();
+            } else {
+              nullableMixedUnionDatum.selectBranch(2);
+              nullableMixedUnionDatum.value<std::string>() =
+                  nullableMixedUnionString.value();
+            }
+
+            writer.write(datum);
+          };
+
+          writeRow(
+              "alpha",
+              11,
+              101,
+              false,
+              1.5,
+              false,
+              1001,
+              1,
+              2.5,
+              0,
+              7,
+              std::nullopt,
+              std::nullopt,
+              std::nullopt,
+              "mix-a",
+              false);
+          writeRow(
+              "beta",
+              std::nullopt,
+              10000000000L,
+              true,
+              9.25,
+              true,
+              20000000000L,
+              2,
+              std::nullopt,
+              1,
+              std::nullopt,
+              std::string("mix-b"),
+              std::nullopt,
+              std::nullopt,
+              std::nullopt,
+              true);
+        });
+    return filePath;
+  }
 };
 
 TEST_F(AvroReaderTest, allTypesSchemaMapping) {
@@ -438,25 +604,7 @@ TEST_F(AvroReaderTest, allTypesSchemaMapping) {
 }
 
 TEST_F(AvroReaderTest, unionMapping) {
-  const std::string schemaJson = R"JSON(
-    {
-      "type": "record",
-      "name": "UnionRecord",
-      "fields": [
-        {"name": "simpleString", "type": ["string"]},
-        {"name": "simpleNull", "type": ["null"]},
-        {"name": "nullableInt", "type": ["null", "int"]},
-        {"name": "intOrLong", "type": ["int", "long"]},
-        {"name": "floatOrDouble", "type": ["float", "double"]},
-        {"name": "nullableIntOrLong", "type": ["null", "int", "long"]},
-        {"name": "nullableFloatOrDouble", "type": ["float", "null", "double"]},
-        {"name": "mixedUnion", "type": ["int", "string"]},
-        {"name": "nullableMixedUnion", "type": ["int", "long", "string", "null"]}
-      ]
-    })JSON";
-  const auto filePath = writeAvroFile(
-      schemaJson,
-      [](auto& /*writer*/, const ::avro::ValidSchema& /*schema*/) {});
+  const auto filePath = writeUnionRecord();
 
   auto reader = createReader(filePath);
   auto rowType = reader->rowType();
@@ -700,6 +848,67 @@ TEST_F(AvroReaderTest, readsAllTypesData) {
       makeFlatVector<int64_t>({12345, -4200}, DECIMAL(9, 2)),
       makeFlatVector<int64_t>({6789, -1357}, DECIMAL(7, 3)),
   });
+  assertEqualVectors(expected, result);
+}
+
+TEST_F(AvroReaderTest, readsComplexNestedData) {
+  const auto filePath = writeComplexNestedRecord();
+  auto reader = createReader(filePath);
+  auto result = readRows(*reader, 1, 1);
+
+  auto ids = makeArrayVector<int64_t>({{101, 202}});
+  auto attrsKeys = makeFlatVector<std::string>({"alpha", "beta"});
+  auto attrsValues =
+      makeNullableFlatVector<std::string>({std::nullopt, "beta"});
+  auto attrs = makeMapVector({0, 2}, attrsKeys, attrsValues);
+  auto meta = makeRowVector({ids, attrs});
+
+  auto flagsElements = makeNullableFlatVector<bool>({std::nullopt, true});
+  auto flags = makeArrayVector({0, 2}, flagsElements);
+
+  auto propertyKeys = makeFlatVector<std::string>({"k1"});
+  auto propertyNames = makeFlatVector<std::string>({"p1"});
+  auto propertyValuesElements = makeFlatVector<int32_t>({1, 2});
+  auto propertyValues =
+      makeArrayVector({0, 2}, propertyValuesElements);
+  auto propertyRow = makeRowVector({propertyNames, propertyValues});
+  auto properties = makeMapVector({0, 1}, propertyKeys, propertyRow);
+
+  auto payload = makeRowVector({flags, properties});
+  auto payloads = makeArrayVector({0, 1}, payload);
+
+  auto expected = makeRowVector({meta, payloads});
+  assertEqualVectors(expected, result);
+}
+
+TEST_F(AvroReaderTest, readsUnionData) {
+  const auto filePath = writeUnionRecord();
+  auto reader = createReader(filePath);
+  auto result = readRows(*reader, 2, 2);
+
+  auto mixedUnion = makeRowVector({
+      makeNullableFlatVector<int32_t>({7, std::nullopt}),
+      makeNullableFlatVector<std::string>({std::nullopt, "mix-b"}),
+  });
+
+  auto nullableMixedUnion = makeRowVector({
+      makeNullableFlatVector<int32_t>({std::nullopt, std::nullopt}),
+      makeNullableFlatVector<int64_t>({std::nullopt, std::nullopt}),
+      makeNullableFlatVector<std::string>({"mix-a", std::nullopt}),
+  });
+
+  auto expected = makeRowVector({
+      makeFlatVector<std::string>({"alpha", "beta"}),
+      makeNullConstant(TypeKind::UNKNOWN, 2),
+      makeNullableFlatVector<int32_t>({11, std::nullopt}),
+      makeFlatVector<int64_t>({101, 10000000000L}),
+      makeFlatVector<double>({1.5, 9.25}),
+      makeNullableFlatVector<int64_t>({1001, 20000000000L}),
+      makeNullableFlatVector<double>({2.5, std::nullopt}),
+      mixedUnion,
+      nullableMixedUnion,
+  });
+
   assertEqualVectors(expected, result);
 }
 } // namespace
