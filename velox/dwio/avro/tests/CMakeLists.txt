@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-set(TEST_LINK_LIBS velox_vector_test_lib velox_temp_path GTest::gtest)
+set(TEST_LINK_LIBS velox_vector_test_lib velox_test_util GTest::gtest)
 
 add_executable(velox_avro_reader_test AvroReaderTest.cpp)
 

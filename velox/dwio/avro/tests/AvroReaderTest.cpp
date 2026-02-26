@@ -19,8 +19,8 @@
 #include <avro/Generic.hh>
 
 #include "velox/common/base/VeloxException.h"
+#include "velox/common/testutil/TempFilePath.h"
 #include "velox/dwio/avro/RegisterAvroReader.h"
-#include "velox/exec/tests/utils/TempFilePath.h"
 #include "velox/type/Type.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
@@ -28,6 +28,8 @@ using namespace facebook::velox::test;
 
 namespace facebook::velox::avro {
 namespace {
+using namespace facebook::velox::common::testutil;
+
 class AvroReaderTest : public testing::Test, public VectorTestBase {
  protected:
   static void SetUpTestSuite() {
@@ -50,7 +52,7 @@ class AvroReaderTest : public testing::Test, public VectorTestBase {
   }
 
   std::unique_ptr<dwio::common::Reader> createReader(
-      const std::shared_ptr<exec::test::TempFilePath>& filePath,
+      const std::shared_ptr<TempFilePath>& filePath,
       std::optional<dwio::common::ReaderOptions> readerOptions =
           std::nullopt) const {
     auto options = readerOptions.value_or(dwio::common::ReaderOptions{pool()});
@@ -82,7 +84,7 @@ class AvroReaderTest : public testing::Test, public VectorTestBase {
     return result;
   }
 
-  static std::shared_ptr<exec::test::TempFilePath> writeAvroFile(
+  static std::shared_ptr<TempFilePath> writeAvroFile(
       const std::string& schemaJson,
       const std::function<void(
           ::avro::DataFileWriter<::avro::GenericDatum>&,
@@ -91,7 +93,7 @@ class AvroReaderTest : public testing::Test, public VectorTestBase {
     std::istringstream schemaStream(schemaJson);
     ::avro::compileJsonSchema(schemaStream, schema);
 
-    auto path = exec::test::TempFilePath::create();
+    auto path = TempFilePath::create();
     ::avro::DataFileWriter<::avro::GenericDatum> writer(
         path->getPath().c_str(), schema);
     writeRows(writer, schema);
@@ -99,7 +101,7 @@ class AvroReaderTest : public testing::Test, public VectorTestBase {
     return path;
   }
 
-  std::shared_ptr<exec::test::TempFilePath> writeAllTypesRecord() const {
+  std::shared_ptr<TempFilePath> writeAllTypesRecord() const {
     const std::string schemaJson = R"JSON(
     {
       "type": "record",
@@ -313,7 +315,7 @@ class AvroReaderTest : public testing::Test, public VectorTestBase {
   //             └── PropertyRecord (record)
   //                 ├── name : string
   //                 └── values : array<int>
-  std::shared_ptr<exec::test::TempFilePath> writeComplexNestedRecord() const {
+  std::shared_ptr<TempFilePath> writeComplexNestedRecord() const {
     const std::string schemaJson = R"JSON(
     {
       "type": "record",
@@ -399,7 +401,7 @@ class AvroReaderTest : public testing::Test, public VectorTestBase {
     return filePath;
   }
 
-  std::shared_ptr<exec::test::TempFilePath> writeUnionRecord() const {
+  std::shared_ptr<TempFilePath> writeUnionRecord() const {
     const std::string schemaJson = R"JSON(
     {
       "type": "record",
