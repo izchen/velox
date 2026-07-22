@@ -30,6 +30,7 @@ class GenericDatum;
 namespace facebook::velox::avro {
 
 struct AvroFileContents;
+struct AvroReadSchema;
 
 class AvroReader : public dwio::common::Reader {
  public:
@@ -86,6 +87,8 @@ class AvroRowReader : public dwio::common::RowReader {
   const std::unique_ptr<::avro::GenericDatum> datum_;
   const int64_t splitLimit_;
   const uint64_t avroScanBatchBytes_;
+  const dwio::common::RowReaderOptions options_;
+  const std::shared_ptr<const AvroReadSchema> readSchema_;
   bool atEnd_;
 
   // Byte position of the sync marker preceding the first row in this split.

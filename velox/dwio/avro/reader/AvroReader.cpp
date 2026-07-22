@@ -26,6 +26,7 @@
 
 #include "velox/dwio/avro/reader/AvroDatumDecoder.h"
 #include "velox/dwio/avro/reader/AvroInputStream.h"
+#include "velox/dwio/avro/reader/AvroReadSchema.h"
 #include "velox/dwio/avro/reader/AvroSchemaConverter.h"
 #include "velox/dwio/avro/reader/AvroType.h"
 #include "velox/dwio/common/Options.h"
@@ -217,13 +218,18 @@ AvroRowReader::AvroRowReader(
               ? kMaxSafeAvroReaderPosition
               : static_cast<int64_t>(options.limit())),
       avroScanBatchBytes_(loadAvroScanBatchBytes(options)),
+      options_(options),
+      readSchema_(buildAvroReadSchema(
+          contents_->typeInfo,
+          contents_->rowType,
+          options)),
       atEnd_(false),
       splitStartPosition_(0),
       splitStartRowNumber_(0),
       numRowsConsumedInSplit_(0),
       rowSizeSampleCount_(0),
       rowSizeSampleBytes_(0) {
-  if (options.rowNumberColumnInfo().has_value()) {
+  if (options_.rowNumberColumnInfo().has_value()) {
     // TODO: Support implicit row number columns using currentFileRowNumber().
     VELOX_UNSUPPORTED(
         "Avro reader does not support implicit row number columns.");
@@ -306,7 +312,7 @@ uint64_t AvroRowReader::next(
   }
   const auto rowsToRead = nextReadSize(size);
   SelectivityVector rows(rowsToRead);
-  const auto& rowType = contents_->rowType;
+  const auto& rowType = readSchema_->rowType;
   if (result && !result->type()->equivalent(*rowType)) {
     result.reset();
   }
@@ -315,7 +321,7 @@ uint64_t AvroRowReader::next(
   rowVector->resize(rowsToRead);
   exec::VectorWriter<Any> writer;
   writer.init(*rowVector);
-  const auto* rootInfo = contents_->typeInfo.get();
+  const auto* rootInfo = readSchema_->typeInfo.get();
 
   vector_size_t numRead = 0;
   while (numRead < rowsToRead) {
