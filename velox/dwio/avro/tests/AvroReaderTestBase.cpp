@@ -752,4 +752,38 @@ std::shared_ptr<TempFilePath> AvroReaderTestBase::writeLogicalUnionRecord()
   return filePath;
 }
 
+std::pair<std::shared_ptr<TempFilePath>, uint64_t>
+AvroReaderTestBase::writeSplitRowNumberRecord() {
+  const std::string schemaJson = R"JSON(
+  {
+    "type": "record",
+    "name": "SplitRowNumberRecord",
+    "fields": [
+      {"name": "value", "type": "int"}
+    ]
+  })JSON";
+  uint64_t splitOffset{0};
+  auto filePath = writeAvroFile(
+      schemaJson,
+      [&splitOffset](auto& writer, const ::avro::ValidSchema& schema) {
+        ::avro::GenericDatum datum(schema.root());
+        auto& value =
+            datum.value<::avro::GenericRecord>().fieldAt(0).value<int32_t>();
+
+        // Place the split at the first block's start. Avro aligns a non-zero
+        // split to the next sync marker, so reading starts at the second
+        // block.
+        splitOffset = writer.getCurrentBlockStart();
+        value = 10;
+        writer.write(datum);
+        writer.flush();
+
+        value = 20;
+        writer.write(datum);
+        value = 30;
+        writer.write(datum);
+      });
+  return {std::move(filePath), splitOffset};
+}
+
 } // namespace facebook::velox::avro

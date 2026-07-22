@@ -93,6 +93,9 @@ class AvroReaderTestBase : public testing::Test, public test::VectorTestBase {
   std::shared_ptr<common::testutil::TempFilePath> writeLogicalUnionRecord()
       const;
 
+  // Writes multiple blocks and returns an offset before the second block.
+  static std::pair<std::shared_ptr<common::testutil::TempFilePath>, uint64_t>
+  writeSplitRowNumberRecord();
 };
 
 } // namespace facebook::velox::avro
