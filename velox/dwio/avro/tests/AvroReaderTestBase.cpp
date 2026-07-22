@@ -20,12 +20,66 @@
 
 #include <sstream>
 
+#include "velox/common/base/tests/GTestUtils.h"
+#include "velox/dwio/avro/RegisterAvroReader.h"
+#include "velox/dwio/common/ScanSpec.h"
+
 namespace facebook::velox::avro {
 
 using namespace facebook::velox::common::testutil;
 
 void AvroReaderTestBase::SetUpTestSuite() {
   memory::MemoryManager::testingSetInstance(memory::MemoryManager::Options{});
+}
+
+void AvroReaderTestBase::SetUp() {
+  registerAvroReaderFactory();
+}
+
+void AvroReaderTestBase::TearDown() {
+  unregisterAvroReaderFactory();
+}
+
+void AvroReaderTestBase::setScanSpec(
+    const Type& type,
+    dwio::common::RowReaderOptions& options) const {
+  auto spec = std::make_shared<common::ScanSpec>("root");
+  spec->addAllChildFields(type);
+  options.setScanSpec(spec);
+}
+
+std::unique_ptr<dwio::common::Reader> AvroReaderTestBase::createReader(
+    const std::shared_ptr<TempFilePath>& filePath,
+    std::optional<dwio::common::ReaderOptions> readerOptions) const {
+  auto options = readerOptions.value_or(dwio::common::ReaderOptions{pool()});
+  auto factory = dwio::common::getReaderFactory(dwio::common::FileFormat::AVRO);
+  auto input = std::make_unique<dwio::common::BufferedInput>(
+      std::make_shared<LocalReadFile>(filePath->getPath()), *pool());
+  return factory->createReader(std::move(input), options);
+}
+
+std::unique_ptr<dwio::common::RowReader> AvroReaderTestBase::createRowReader(
+    dwio::common::Reader& reader,
+    std::optional<dwio::common::RowReaderOptions> rowOptions) const {
+  auto options = rowOptions.value_or(dwio::common::RowReaderOptions{});
+  return reader.createRowReader(options);
+}
+
+VectorPtr AvroReaderTestBase::readRows(
+    dwio::common::Reader& reader,
+    uint64_t maxRows,
+    uint64_t expectedScannedRows,
+    std::optional<dwio::common::RowReaderOptions> rowOptions) const {
+  auto options = rowOptions.value_or(dwio::common::RowReaderOptions{});
+  if (!options.scanSpec()) {
+    setScanSpec(
+        options.requestedType() ? *options.requestedType() : *reader.rowType(),
+        options);
+  }
+  auto rowReader = createRowReader(reader, options);
+  VectorPtr result;
+  EXPECT_EQ(rowReader->next(maxRows, result), expectedScannedRows);
+  return result;
 }
 
 std::shared_ptr<TempFilePath> AvroReaderTestBase::writeAvroFile(
@@ -341,6 +395,54 @@ std::shared_ptr<TempFilePath> AvroReaderTestBase::writeComplexNestedRecord()
         payloadsArray.emplace_back(payloadDatum);
 
         writer.write(datum);
+      });
+  return filePath;
+}
+
+std::shared_ptr<TempFilePath> AvroReaderTestBase::writeRequestedTypeRecord()
+    const {
+  const std::string schemaJson = R"JSON(
+  {
+    "type": "record",
+    "name": "RequestedTypeRecord",
+    "fields": [
+      {"name": "rawDate", "type": {"type": "int", "logicalType": "date"}},
+      {"name": "meta", "type": {
+        "type": "record",
+        "name": "RequestedMetaRecord",
+        "fields": [
+          {"name": "tsMillis", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+          {"name": "tsMicros", "type": {"type": "long", "logicalType": "timestamp-micros"}},
+          {"name": "label", "type": "string"},
+          {"name": "count", "type": "int"}
+        ]
+      }},
+      {"name": "unused", "type": "string"}
+    ]
+  })JSON";
+
+  auto filePath = writeAvroFile(
+      schemaJson, [](auto& writer, const ::avro::ValidSchema& schema) {
+        ::avro::GenericDatum datum(schema.root());
+        auto& record = datum.value<::avro::GenericRecord>();
+        auto writeRow = [&](int32_t rawDate,
+                            int64_t tsMillis,
+                            int64_t tsMicros,
+                            const std::string& label,
+                            int32_t count,
+                            const std::string& unused) {
+          record.fieldAt(0).value<int32_t>() = rawDate;
+          auto& meta = record.fieldAt(1).value<::avro::GenericRecord>();
+          meta.fieldAt(0).value<int64_t>() = tsMillis;
+          meta.fieldAt(1).value<int64_t>() = tsMicros;
+          meta.fieldAt(2).value<std::string>() = label;
+          meta.fieldAt(3).value<int32_t>() = count;
+          record.fieldAt(2).value<std::string>() = unused;
+          writer.write(datum);
+        };
+
+        writeRow(11, 1'700, 3'500, "alpha", 1, "unused-a");
+        writeRow(22, 2'700, 4'500, "beta", 2, "unused-b");
       });
   return filePath;
 }
