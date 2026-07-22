@@ -14,8 +14,10 @@
 
 velox_add_library(
   velox_dwio_avro_reader
+  AvroDatumDecoder.cpp
   AvroSchemaConverter.cpp
   HEADERS
+  AvroDatumDecoder.h
   AvroSchemaConverter.h
   AvroType.h
 )
