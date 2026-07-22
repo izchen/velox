@@ -15,6 +15,7 @@ set(TEST_LINK_LIBS velox_vector_test_lib velox_test_util GTest::gtest)
 
 add_executable(
   velox_avro_reader_test
+  AvroDatumDecoderTest.cpp
   AvroReaderTestBase.cpp
   AvroSchemaConverterTest.cpp
 )
