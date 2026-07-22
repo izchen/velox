@@ -26,6 +26,7 @@
 
 #include "velox/dwio/avro/reader/AvroDatumDecoder.h"
 #include "velox/dwio/avro/reader/AvroInputStream.h"
+#include "velox/dwio/avro/reader/AvroReadProcessor.h"
 #include "velox/dwio/avro/reader/AvroReadSchema.h"
 #include "velox/dwio/avro/reader/AvroSchemaConverter.h"
 #include "velox/dwio/avro/reader/AvroType.h"
@@ -297,16 +298,14 @@ void AvroRowReader::updateRuntimeStats(
     dwio::common::RuntimeStatistics& /*stats*/) const {}
 
 void AvroRowReader::resetFilterCaches() {
-  // No-op because the basic Avro reader does not cache filter results.
+  // No-op because Avro applies filters after materialization and does not
+  // cache filter results.
 }
 
 uint64_t AvroRowReader::next(
     const uint64_t size,
     VectorPtr& result,
     const dwio::common::Mutation* mutation) {
-  if (mutation != nullptr) {
-    VELOX_UNSUPPORTED("Avro reader does not support mutations.");
-  }
   if (atEnd_ || size == 0) {
     return 0;
   }
@@ -346,6 +345,8 @@ uint64_t AvroRowReader::next(
     rowSizeSampleCount_ += numRead;
     rowSizeSampleBytes_ += batchBytes;
   }
+  const auto& scanSpec = options_.scanSpec();
+  result = processAvroRows(rowVector, scanSpec.get(), mutation);
   return numRead;
 }
 
