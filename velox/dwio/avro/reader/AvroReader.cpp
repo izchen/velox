@@ -16,6 +16,7 @@
 
 #include "velox/dwio/avro/reader/AvroReader.h"
 
+#include <algorithm>
 #include <avro/Compiler.hh>
 #include <avro/DataFile.hh>
 #include <avro/Generic.hh>
@@ -41,6 +42,35 @@ using dwio::common::TypeWithId;
 // std::numeric_limits<int64_t>::max() - SyncSize.
 constexpr int64_t kMaxSafeAvroReaderPosition =
     std::numeric_limits<int64_t>::max() - ::avro::SyncSize;
+
+constexpr std::string_view kAvroScanBatchBytesKey = "avro.scan.batch.bytes";
+constexpr uint64_t kDefaultAvroScanBatchBytes = 100UL << 20; // 100MB
+
+uint64_t loadAvroScanBatchBytes(const dwio::common::RowReaderOptions& options) {
+  const auto& params = options.serdeParameters();
+  const auto it = params.find(std::string(kAvroScanBatchBytesKey));
+  if (it == params.end() || it->second.empty()) {
+    return kDefaultAvroScanBatchBytes;
+  }
+
+  uint64_t bytes = 0;
+  try {
+    bytes = folly::to<uint64_t>(it->second);
+  } catch (const folly::ConversionError& e) {
+    VELOX_USER_FAIL(
+        "Invalid value for '{}': '{}'. Details: {}.",
+        kAvroScanBatchBytesKey,
+        it->second,
+        e.what());
+  }
+  VELOX_USER_CHECK_GT(
+      bytes,
+      0,
+      "Invalid value for '{}': '{}'. Expected a positive integer number of bytes.",
+      kAvroScanBatchBytesKey,
+      it->second);
+  return bytes;
+}
 
 } // namespace
 
@@ -138,28 +168,106 @@ std::unique_ptr<dwio::common::RowReader> AvroReader::createRowReader(
   return std::make_unique<AvroRowReader>(contents_, options);
 }
 
+namespace {
+// Avro-cpp does not expose OCF block metadata such as row counts, so derive an
+// absolute split row number on demand by scanning from the file start.
+// TODO: Use block metadata when avro-cpp exposes it.
+uint64_t countRowsBeforeBlock(
+    const AvroFileContents& contents,
+    int64_t blockStart) {
+  auto reader = createAvroDataFileReader(contents);
+  ::avro::GenericDatum datum(reader->readerSchema());
+  uint64_t numRows{0};
+  while (reader->read(datum)) {
+    if (reader->previousSync() >= blockStart) {
+      break;
+    }
+    ++numRows;
+  }
+  return numRows;
+}
+
+} // namespace
+
 AvroRowReader::AvroRowReader(
     std::shared_ptr<AvroFileContents> contents,
-    const dwio::common::RowReaderOptions& /*options*/)
+    const dwio::common::RowReaderOptions& options)
     : contents_(std::move(contents)),
       reader_(createAvroDataFileReader(*contents_)),
       datum_(std::make_unique<::avro::GenericDatum>(reader_->readerSchema())),
-      atEnd_(reader_->pastSync(kMaxSafeAvroReaderPosition)),
-      numRowsConsumed_(0) {}
+      splitLimit_(
+          options.limit() >= static_cast<uint64_t>(kMaxSafeAvroReaderPosition)
+              ? kMaxSafeAvroReaderPosition
+              : static_cast<int64_t>(options.limit())),
+      avroScanBatchBytes_(loadAvroScanBatchBytes(options)),
+      atEnd_(false),
+      splitStartPosition_(0),
+      splitStartRowNumber_(0),
+      numRowsConsumedInSplit_(0),
+      rowSizeSampleCount_(0),
+      rowSizeSampleBytes_(0) {
+  if (options.rowNumberColumnInfo().has_value()) {
+    // TODO: Support implicit row number columns using currentFileRowNumber().
+    VELOX_UNSUPPORTED(
+        "Avro reader does not support implicit row number columns.");
+  }
+  if (options.offset() > 0) {
+    reader_->sync(static_cast<int64_t>(options.offset()));
+    if (reader_->pastSync(splitLimit_)) {
+      atEnd_ = true;
+    } else {
+      splitStartPosition_ = reader_->previousSync();
+      splitStartRowNumber_.reset();
+    }
+  }
+  uint64_t skip = options.skipRows();
+  while (skip > 0) {
+    if (reader_->pastSync(splitLimit_) || !reader_->read(*datum_)) {
+      atEnd_ = true;
+      break;
+    }
+    ++numRowsConsumedInSplit_;
+    --skip;
+  }
+  if (skip > 0) {
+    atEnd_ = true;
+  }
+  if (!atEnd_ && reader_->pastSync(splitLimit_)) {
+    atEnd_ = true;
+  }
+}
+
+uint64_t AvroRowReader::currentFileRowNumber() {
+  if (!splitStartRowNumber_.has_value()) {
+    splitStartRowNumber_ =
+        countRowsBeforeBlock(*contents_, splitStartPosition_);
+  }
+  return splitStartRowNumber_.value() + numRowsConsumedInSplit_;
+}
 
 int64_t AvroRowReader::nextRowNumber() {
-  return atEnd_ ? kAtEnd : static_cast<int64_t>(numRowsConsumed_);
+  return atEnd_ ? kAtEnd : static_cast<int64_t>(currentFileRowNumber());
 }
 
 std::optional<size_t> AvroRowReader::estimatedRowSize() const {
-  return std::nullopt;
+  if (rowSizeSampleCount_ == 0 || rowSizeSampleBytes_ == 0) {
+    return std::nullopt;
+  }
+  return std::max<size_t>(1, rowSizeSampleBytes_ / rowSizeSampleCount_);
 }
 
 int64_t AvroRowReader::nextReadSize(const uint64_t size) {
   if (atEnd_) {
     return kAtEnd;
   }
-  return static_cast<int64_t>(size);
+  const auto rowSize = estimatedRowSize();
+  if (!rowSize.has_value()) {
+    return static_cast<int64_t>(size);
+  }
+  const auto rowsByBytes =
+      std::max<uint64_t>(1, avroScanBatchBytes_ / rowSize.value());
+
+  return static_cast<int64_t>(std::min<uint64_t>(size, rowsByBytes));
 }
 
 void AvroRowReader::updateRuntimeStats(
@@ -194,7 +302,7 @@ uint64_t AvroRowReader::next(
 
   vector_size_t numRead = 0;
   while (numRead < rowsToRead) {
-    if (!reader_->read(*datum_)) {
+    if (reader_->pastSync(splitLimit_) || !reader_->read(*datum_)) {
       atEnd_ = true;
       break;
     }
@@ -204,12 +312,17 @@ uint64_t AvroRowReader::next(
     writer.commit(true);
     ++numRead;
   }
-  numRowsConsumed_ += numRead;
-  if (!atEnd_ && reader_->pastSync(kMaxSafeAvroReaderPosition)) {
+  numRowsConsumedInSplit_ += numRead;
+  if (!atEnd_ && reader_->pastSync(splitLimit_)) {
     atEnd_ = true;
   }
   writer.finish();
   rowVector->resize(numRead);
+  if (numRead > 0) {
+    const auto batchBytes = rowVector->estimateFlatSize();
+    rowSizeSampleCount_ += numRead;
+    rowSizeSampleBytes_ += batchBytes;
+  }
   return numRead;
 }
 

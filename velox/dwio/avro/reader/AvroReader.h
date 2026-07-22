@@ -77,10 +77,27 @@ class AvroRowReader : public dwio::common::RowReader {
   std::optional<size_t> estimatedRowSize() const override;
 
  private:
+  // Returns the absolute number of the next row, resolving the split's
+  // absolute starting row only when a caller requests it.
+  uint64_t currentFileRowNumber();
+
   const std::shared_ptr<AvroFileContents> contents_;
   const std::unique_ptr<::avro::DataFileReader<::avro::GenericDatum>> reader_;
   const std::unique_ptr<::avro::GenericDatum> datum_;
+  const int64_t splitLimit_;
+  const uint64_t avroScanBatchBytes_;
   bool atEnd_;
-  uint64_t numRowsConsumed_;
+
+  // Byte position of the sync marker preceding the first row in this split.
+  int64_t splitStartPosition_;
+
+  // Absolute row number at splitStartPosition_, resolved on demand.
+  std::optional<uint64_t> splitStartRowNumber_;
+
+  // Number of rows skipped or scanned since splitStartPosition_.
+  uint64_t numRowsConsumedInSplit_;
+
+  uint64_t rowSizeSampleCount_;
+  uint64_t rowSizeSampleBytes_;
 };
 } // namespace facebook::velox::avro
