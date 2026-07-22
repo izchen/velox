@@ -21,20 +21,52 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
 
 #include "velox/common/testutil/TempFilePath.h"
+#include "velox/dwio/common/Reader.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
 namespace facebook::velox::avro {
 
-/// Provides shared Avro files for Avro reader component tests.
+/// Provides shared Avro files and reader operations for Avro reader tests.
 class AvroReaderTestBase : public testing::Test, public test::VectorTestBase {
  protected:
   // Initializes the memory manager shared by the test suite.
   static void SetUpTestSuite();
+
+  // Registers the Avro reader factory before each test.
+  void SetUp() override;
+
+  // Unregisters the Avro reader factory after each test.
+  void TearDown() override;
+
+  // Adds all fields of 'type' to the ScanSpec in 'options'.
+  void setScanSpec(const Type& type, dwio::common::RowReaderOptions& options)
+      const;
+
+  // Creates an Avro reader for 'filePath'.
+  std::unique_ptr<dwio::common::Reader> createReader(
+      const std::shared_ptr<common::testutil::TempFilePath>& filePath,
+      std::optional<dwio::common::ReaderOptions> readerOptions =
+          std::nullopt) const;
+
+  // Creates a row reader using the supplied options.
+  std::unique_ptr<dwio::common::RowReader> createRowReader(
+      dwio::common::Reader& reader,
+      std::optional<dwio::common::RowReaderOptions> rowOptions =
+          std::nullopt) const;
+
+  // Reads a batch and verifies the number of scanned rows.
+  VectorPtr readRows(
+      dwio::common::Reader& reader,
+      uint64_t maxRows,
+      uint64_t expectedScannedRows,
+      std::optional<dwio::common::RowReaderOptions> rowOptions =
+          std::nullopt) const;
 
   // Writes rows produced by 'writeRows' using the supplied Avro schema.
   static std::shared_ptr<common::testutil::TempFilePath> writeAvroFile(
@@ -48,6 +80,10 @@ class AvroReaderTestBase : public testing::Test, public test::VectorTestBase {
 
   // Writes nested record, array, and map values.
   std::shared_ptr<common::testutil::TempFilePath> writeComplexNestedRecord()
+      const;
+
+  // Writes rows used by requested-type and projection tests.
+  std::shared_ptr<common::testutil::TempFilePath> writeRequestedTypeRecord()
       const;
 
   // Writes values covering supported Avro union representations.

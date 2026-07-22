@@ -16,6 +16,7 @@ set(TEST_LINK_LIBS velox_vector_test_lib velox_test_util GTest::gtest)
 add_executable(
   velox_avro_reader_test
   AvroDatumDecoderTest.cpp
+  AvroReaderTest.cpp
   AvroReaderTestBase.cpp
   AvroSchemaConverterTest.cpp
 )
@@ -28,4 +29,4 @@ add_test(
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(velox_avro_reader_test velox_dwio_avro_reader ${TEST_LINK_LIBS})
+target_link_libraries(velox_avro_reader_test velox_dwio_avro_reader_register ${TEST_LINK_LIBS})
