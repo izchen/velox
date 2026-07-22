@@ -76,6 +76,70 @@ TEST_F(AvroReaderTest, rejectsNonRecordRootSchema) {
   EXPECT_THROW(createReader(filePath), VeloxRuntimeError);
 }
 
+TEST_F(AvroReaderTest, usesSchemaOverride) {
+  const std::string writerSchema = R"JSON(
+    {
+      "type": "record",
+      "name": "WriterRecord",
+      "fields": [
+        {"name": "a", "type": "float"},
+        {"name": "b", "type": "long"}
+      ]
+    })JSON";
+  auto filePath = writeAvroFile(
+      writerSchema, [](auto& writer, const ::avro::ValidSchema& schema) {
+        ::avro::GenericDatum datum(schema.root());
+        datum.value<::avro::GenericRecord>().fieldAt(0).value<float>() = 0.1f;
+        datum.value<::avro::GenericRecord>().fieldAt(1).value<int64_t>() = 1;
+        writer.write(datum);
+      });
+
+  const std::string readerSchema = R"JSON(
+    {
+      "type": "record",
+      "name": "ReaderRecord",
+      "fields": [
+        {"name": "a", "type": "double"},
+        {"name": "c", "type": "int", "default": 7}
+      ]
+    })JSON";
+  dwio::common::SerDeOptions serdeOptions;
+  serdeOptions.avroSchema = readerSchema;
+  dwio::common::ReaderOptions options{pool()};
+  options.setSerDeOptions(serdeOptions);
+
+  auto reader = createReader(filePath, options);
+  auto rowType = reader->rowType();
+  ASSERT_EQ(rowType->size(), 2);
+  EXPECT_EQ(rowType->nameOf(0), "a");
+  EXPECT_EQ(rowType->childAt(0)->kind(), TypeKind::DOUBLE);
+  EXPECT_EQ(rowType->nameOf(1), "c");
+  EXPECT_EQ(rowType->childAt(1)->kind(), TypeKind::INTEGER);
+}
+
+TEST_F(AvroReaderTest, rejectsInvalidSchemaOverride) {
+  const std::string schemaJson = R"JSON(
+    {
+      "type": "record",
+      "name": "SchemaOverrideRecord",
+      "fields": [
+        {"name": "a", "type": "int"}
+      ]
+    })JSON";
+  auto filePath = writeAvroFile(
+      schemaJson, [](auto& writer, const ::avro::ValidSchema& schema) {
+        ::avro::GenericDatum datum(schema.root());
+        datum.value<::avro::GenericRecord>().fieldAt(0).value<int32_t>() = 1;
+        writer.write(datum);
+      });
+
+  dwio::common::SerDeOptions serdeOptions;
+  serdeOptions.avroSchema = R"JSON({not-valid-json)JSON";
+  dwio::common::ReaderOptions options{pool()};
+  options.setSerDeOptions(serdeOptions);
+  EXPECT_THROW(createReader(filePath, options), VeloxUserError);
+}
+
 TEST_F(AvroReaderTest, createsMultipleRowReaders) {
   const auto filePath = writeAllTypesRecord();
   auto reader = createReader(filePath);
