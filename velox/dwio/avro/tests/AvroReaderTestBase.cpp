@@ -82,6 +82,15 @@ VectorPtr AvroReaderTestBase::readRows(
   return result;
 }
 
+void AvroReaderTestBase::expectRequestedTypeRejected(
+    const std::shared_ptr<TempFilePath>& filePath,
+    RowTypePtr requestedType) const {
+  auto reader = createReader(filePath);
+  dwio::common::RowReaderOptions rowOptions;
+  rowOptions.setRequestedType(std::move(requestedType));
+  EXPECT_THROW(createRowReader(*reader, rowOptions), VeloxUserError);
+}
+
 std::shared_ptr<TempFilePath> AvroReaderTestBase::writeAvroFile(
     const std::string& schemaJson,
     const std::function<void(
@@ -393,6 +402,55 @@ std::shared_ptr<TempFilePath> AvroReaderTestBase::writeComplexNestedRecord()
         values.emplace_back(2);
         properties.emplace_back("k1", propertyDatum);
         payloadsArray.emplace_back(payloadDatum);
+
+        writer.write(datum);
+      });
+  return filePath;
+}
+
+std::shared_ptr<TempFilePath> AvroReaderTestBase::writePruningRecord() const {
+  const std::string schemaJson = R"JSON(
+  {
+    "type": "record",
+    "name": "PruningRecord",
+    "fields": [
+      {"name": "nums", "type": {"type": "array", "items": "int"}},
+      {"name": "limited", "type": {"type": "array", "items": "int"}},
+      {"name": "props", "type": {"type": "map", "values": "int"}},
+      {"name": "valueProps", "type": {"type": "map", "values": "int"}}
+    ]
+  })JSON";
+
+  auto filePath = writeAvroFile(
+      schemaJson, [](auto& writer, const ::avro::ValidSchema& schema) {
+        ::avro::GenericDatum datum(schema.root());
+        auto& record = datum.value<::avro::GenericRecord>();
+
+        auto& nums = record.fieldAt(0).value<::avro::GenericArray>().value();
+        for (auto value : {1, 2, 3, 4}) {
+          nums.emplace_back(static_cast<int32_t>(value));
+        }
+
+        auto& limited = record.fieldAt(1).value<::avro::GenericArray>().value();
+        for (auto value : {10, 20, 30}) {
+          limited.emplace_back(static_cast<int32_t>(value));
+        }
+
+        auto addMapEntry =
+            [](auto& map, const std::string& key, int32_t value) {
+              map.emplace_back(key, ::avro::GenericDatum(value));
+            };
+
+        auto& props = record.fieldAt(2).value<::avro::GenericMap>().value();
+        addMapEntry(props, "k1", 1);
+        addMapEntry(props, "k2", 2);
+        addMapEntry(props, "k3", 3);
+
+        auto& valueProps =
+            record.fieldAt(3).value<::avro::GenericMap>().value();
+        addMapEntry(valueProps, "k1", 1);
+        addMapEntry(valueProps, "k2", 2);
+        addMapEntry(valueProps, "k3", 3);
 
         writer.write(datum);
       });

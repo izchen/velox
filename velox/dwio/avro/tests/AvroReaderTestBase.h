@@ -69,6 +69,11 @@ class AvroReaderTestBase : public testing::Test, public test::VectorTestBase {
       std::optional<dwio::common::RowReaderOptions> rowOptions =
           std::nullopt) const;
 
+  // Verifies that a requested type is rejected while creating a row reader.
+  void expectRequestedTypeRejected(
+      const std::shared_ptr<common::testutil::TempFilePath>& filePath,
+      RowTypePtr requestedType) const;
+
   // Writes rows produced by 'writeRows' using the supplied Avro schema.
   static std::shared_ptr<common::testutil::TempFilePath> writeAvroFile(
       const std::string& schemaJson,
@@ -82,6 +87,9 @@ class AvroReaderTestBase : public testing::Test, public test::VectorTestBase {
   // Writes nested record, array, and map values.
   std::shared_ptr<common::testutil::TempFilePath> writeComplexNestedRecord()
       const;
+
+  // Writes arrays and maps used by nested pruning tests.
+  std::shared_ptr<common::testutil::TempFilePath> writePruningRecord() const;
 
   // Writes rows used by requested-type and projection tests.
   std::shared_ptr<common::testutil::TempFilePath> writeRequestedTypeRecord()
