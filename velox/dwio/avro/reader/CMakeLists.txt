@@ -12,7 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-velox_add_library(velox_dwio_avro_reader AvroReader.cpp HEADERS AvroReader.h)
+velox_add_library(
+  velox_dwio_avro_reader
+  AvroDatumDecoder.cpp
+  AvroInputStream.cpp
+  AvroReadProcessor.cpp
+  AvroReadSchema.cpp
+  AvroReader.cpp
+  AvroSchemaConverter.cpp
+  HEADERS
+  AvroDatumDecoder.h
+  AvroInputStream.h
+  AvroReadProcessor.h
+  AvroReadSchema.h
+  AvroReader.h
+  AvroSchemaConverter.h
+  AvroType.h
+)
 
 if(VELOX_ENABLE_AVRO)
   find_package(AvroCpp REQUIRED)

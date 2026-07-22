@@ -13,7 +13,17 @@
 # limitations under the License.
 set(TEST_LINK_LIBS velox_vector_test_lib velox_test_util GTest::gtest)
 
-add_executable(velox_avro_reader_test AvroReaderTest.cpp)
+add_executable(
+  velox_avro_reader_test
+  AvroDatumDecoderTest.cpp
+  AvroReadProcessorTest.cpp
+  AvroReadSchemaTest.cpp
+  AvroReaderTest.cpp
+  AvroReaderTestBase.cpp
+  AvroSchemaConverterTest.cpp
+)
+
+velox_add_test_headers(velox_avro_reader_test AvroReaderTestBase.h)
 
 add_test(
   NAME velox_avro_reader_test
