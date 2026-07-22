@@ -22,11 +22,13 @@
 #include <avro/Generic.hh>
 #include <avro/Schema.hh>
 #include <limits>
+#include <sstream>
 
 #include "velox/dwio/avro/reader/AvroDatumDecoder.h"
 #include "velox/dwio/avro/reader/AvroInputStream.h"
 #include "velox/dwio/avro/reader/AvroSchemaConverter.h"
 #include "velox/dwio/avro/reader/AvroType.h"
+#include "velox/dwio/common/Options.h"
 #include "velox/expression/VectorWriters.h"
 
 namespace facebook::velox::avro {
@@ -118,10 +120,25 @@ AvroReader::AvroReader(
   auto readFileInput = input->getInputStream();
   auto length = readFileInput->getLength();
 
-  auto stream =
-      createAvroInputStream(readFileInput, 0, length, options.memoryPool());
-  ::avro::DataFileReader<::avro::GenericDatum> avroReader(std::move(stream));
-  auto avroSchema = avroReader.readerSchema();
+  // Reader schema precedence: user-configured `avro.schema.literal`,
+  // otherwise the schema embedded in the Avro file.
+  ::avro::ValidSchema avroSchema;
+  if (options.serDeOptions().avroSchema.has_value()) {
+    std::istringstream schemaStream(options.serDeOptions().avroSchema.value());
+    try {
+      ::avro::compileJsonSchema(schemaStream, avroSchema);
+    } catch (const std::exception& e) {
+      VELOX_USER_FAIL(
+          "Failed to parse Avro schema override from '{}': {}",
+          options.serDeOptions().kAvroSchema,
+          e.what());
+    }
+  } else {
+    auto stream =
+        createAvroInputStream(readFileInput, 0, length, options.memoryPool());
+    ::avro::DataFileReader<::avro::GenericDatum> avroReader(std::move(stream));
+    avroSchema = avroReader.readerSchema();
+  }
 
   auto avroSchemaRoot = avroSchema.root();
   VELOX_CHECK_EQ(
